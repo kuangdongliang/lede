@@ -1,0 +1,545 @@
+#
+# This is free software, lisence use MIT.
+# 
+# Copyright (C) 2019 P3TERX <https://p3terx.com>
+# Copyright (C) 2020 KFERMercer <KFER.Mercer@gmail.com>
+# 
+# <https://github.com/KFERMercer/OpenWrt-CI>
+#
+
+name: OpenWrt_Docker
+
+on:
+  push:
+    branches: 
+      - master
+  # schedule:
+  #   - cron: 0 20 * * *
+  release:
+    types: [published]
+
+jobs:
+
+  build_openwrt:
+
+    name: Build OpenWrt firmware Docker
+
+    runs-on: ubuntu-latest
+
+    if: github.event.repository.owner.id == github.event.sender.id
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: master
+
+      - name: Space cleanup
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          docker rmi `docker images -q`
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d
+          sudo -E apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* mysql* php* android*
+          sudo -E apt-get update
+          sudo -E apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs gcc-multilib g++-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler antlr3 gperf swig libtinfo5
+          sudo -E apt-get -y autoremove --purge
+          sudo -E apt-get clean
+
+          # sudo mkdir -p -m 777 /mnt/openwrt/bin /mnt/openwrt/build_dir/host /mnt/openwrt/build_dir/hostpkg /mnt/openwrt/dl /mnt/openwrt/feeds /mnt/openwrt/staging_dir
+          # ln -s /mnt/openwrt/bin ./bin
+          # mkdir -p ./build_dir
+          # ln -s -f /mnt/openwrt/build_dir/host ./build_dir/host
+          # ln -s -f /mnt/openwrt/build_dir/hostpkg ./build_dir/hostpkg
+          # ln -s /mnt/openwrt/dl ./dl
+          # ln -s /mnt/openwrt/feeds ./feeds
+          # ln -s /mnt/openwrt/staging_dir ./staging_dir
+
+          df -h
+
+      - name: Custom plugin theme
+        run: |
+          cd package
+          mkdir openwrt-packages
+          cd openwrt-packages
+          git clone https://github.com/tianiue/luci-packages.git
+          git clone https://github.com/xiaorouji/openwrt-passwall.git
+          git clone https://github.com/fw876/helloworld.git
+          git clone https://github.com/vernesong/OpenClash.git
+          git clone https://github.com/frainzy1477/luci-app-clash.git
+          git clone https://github.com/destan19/OpenAppFilter.git
+          git clone https://github.com/jerrykuku/luci-app-ttnode.git
+          git clone https://github.com/jerrykuku/luci-app-vssr.git
+          git clone https://github.com/jerrykuku/lua-maxminddb.git
+          git clone https://github.com/lisaac/luci-app-dockerman.git
+          git clone https://github.com/lisaac/luci-lib-docker.git
+
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate configuration file
+        run: |
+          rm -f ./.config*
+          touch ./.config
+
+          #
+          # ========================固件定制部分========================
+          # 
+
+          # 
+          # 如果不对本区块做出任何编辑, 则生成默认配置固件. 
+          # 
+
+          # 以下为定制化固件选项和说明:
+          #
+
+          #
+          # 有些插件/选项是默认开启的, 如果想要关闭, 请参照以下示例进行编写:
+          # 
+          #          =========================================
+          #         |  # 取消编译VMware镜像:                   |
+          #         |  cat >> .config <<EOF                   |
+          #         |  # CONFIG_VMDK_IMAGES is not set        |
+          #         |  EOF                                    |
+          #          =========================================
+          #
+
+          # 
+          # 以下是一些提前准备好的一些插件选项.
+          # 直接取消注释相应代码块即可应用. 不要取消注释代码块上的汉字说明.
+          # 如果不需要代码块里的某一项配置, 只需要删除相应行.
+          #
+          # 如果需要其他插件, 请按照示例自行添加.
+          # 注意, 只需添加依赖链顶端的包. 如果你需要插件 A, 同时 A 依赖 B, 即只需要添加 A.
+          # 
+          # 无论你想要对固件进行怎样的定制, 都需要且只需要修改 EOF 回环内的内容.
+          # 
+
+          # 编译x64固件:
+          cat >> .config <<EOF
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+          CONFIG_TARGET_ROOTFS_TARGZ=y
+          CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          EOF
+
+          # 固件压缩:
+          cat >> .config <<EOF
+          CONFIG_TARGET_IMAGES_GZIP=y
+          EOF
+
+          # 设置固件大小:
+          cat >> .config <<EOF
+          CONFIG_TARGET_KERNEL_PARTSIZE=64
+          CONFIG_TARGET_ROOTFS_PARTSIZE=959
+          EOF
+
+          # 编译UEFI固件:
+          cat >> .config <<EOF
+          CONFIG_EFI_IMAGES=y
+          EOF
+
+          # IPv6支持:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+          CONFIG_PACKAGE_ipv6helper=y
+          EOF
+
+          # 多文件系统支持:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_kmod-fs-f2fs=y
+          CONFIG_PACKAGE_kmod-fs-nfs=y
+          CONFIG_PACKAGE_kmod-fs-nfs-common=y
+          CONFIG_PACKAGE_kmod-fs-nfs-common-rpcsec=y
+          CONFIG_PACKAGE_kmod-fs-nfs-v3=y
+          CONFIG_PACKAGE_kmod-fs-nfs-v4=y
+          CONFIG_PACKAGE_kmod-fs-nfsd=y
+          CONFIG_PACKAGE_kmod-fs-squashfs=y
+          EOF
+
+          # USB设备支持:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_kmod-usb-ehci=y
+          CONFIG_PACKAGE_kmod-usb-ohci=y
+          CONFIG_PACKAGE_kmod-usb-ohci-pci=y
+          CONFIG_PACKAGE_kmod-usb-uhci=y
+          CONFIG_PACKAGE_kmod-usb-wdm=y
+          CONFIG_PACKAGE_kmod-usb-net-pl=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_kmod-usb-printer=y
+          CONFIG_PACKAGE_kmod-usb2=y
+          CONFIG_PACKAGE_kmod-usb2-pci=y
+          CONFIG_PACKAGE_kmod-usb3=y
+          EOF
+
+          # 网卡驱动:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_kmod-3c59x=y
+          CONFIG_PACKAGE_kmod-alx=y
+          CONFIG_PACKAGE_kmod-atl1=y
+          CONFIG_PACKAGE_kmod-atl1c=y
+          CONFIG_PACKAGE_kmod-atl1e=y
+          CONFIG_PACKAGE_kmod-atl2=y
+          CONFIG_PACKAGE_kmod-b44=y
+          CONFIG_PACKAGE_kmod-be2net=y
+          CONFIG_PACKAGE_kmod-bnx2x=y
+          CONFIG_PACKAGE_kmod-dm9000=y
+          CONFIG_PACKAGE_kmod-dummy=y
+          CONFIG_PACKAGE_kmod-e100=y
+          CONFIG_PACKAGE_kmod-et131x=y
+          CONFIG_PACKAGE_kmod-ethoc=y
+          CONFIG_PACKAGE_kmod-gigaset=y
+          CONFIG_PACKAGE_kmod-hfcmulti=y
+          CONFIG_PACKAGE_kmod-hfcpci=y
+          CONFIG_PACKAGE_kmod-i40evf=y
+          CONFIG_PACKAGE_kmod-ifb=y
+          CONFIG_PACKAGE_kmod-ixgbevf=y
+          CONFIG_PACKAGE_kmod-mdio-gpio=y
+          CONFIG_PACKAGE_kmod-natsemi=y
+          CONFIG_PACKAGE_kmod-ne2k-pci=y
+          CONFIG_PACKAGE_kmod-niu=y
+          CONFIG_PACKAGE_kmod-of-mdio=y
+          CONFIG_PACKAGE_kmod-phy-bcm84881=y
+          CONFIG_PACKAGE_kmod-phy-broadcom=y
+          CONFIG_PACKAGE_kmod-phy-realtek=y
+          CONFIG_PACKAGE_kmod-phylink=y
+          CONFIG_PACKAGE_kmod-r6040=y
+          CONFIG_PACKAGE_kmod-r8169=y
+          CONFIG_PACKAGE_kmod-sfp=y
+          CONFIG_PACKAGE_kmod-siit=y
+          CONFIG_PACKAGE_kmod-sis190=y
+          CONFIG_PACKAGE_kmod-sis900=y
+          CONFIG_PACKAGE_kmod-skge=y
+          CONFIG_PACKAGE_kmod-sky2=y
+          CONFIG_PACKAGE_kmod-solos-pci=y
+          CONFIG_PACKAGE_kmod-spi-ks8995=y
+          CONFIG_PACKAGE_kmod-swconfig=y
+          CONFIG_PACKAGE_kmod-switch-ip17xx=y
+          CONFIG_PACKAGE_kmod-switch-mvsw61xx=y
+          CONFIG_PACKAGE_kmod-switch-rtl8306=y
+          CONFIG_PACKAGE_kmod-switch-rtl8366-smi=y
+          CONFIG_PACKAGE_kmod-switch-rtl8366rb=y
+          CONFIG_PACKAGE_kmod-switch-rtl8366s=y
+          CONFIG_PACKAGE_kmod-switch-rtl8367b=y
+          CONFIG_PACKAGE_kmod-tg3=y
+          CONFIG_PACKAGE_kmod-usb-net-rtl8152=y
+          CONFIG_PACKAGE_kmod-via-rhine=y
+          CONFIG_PACKAGE_kmod-via-velocity=y
+          EOF
+
+          # WiFi网卡驱动:
+          cat >> .config <<EOF
+          CONFIG_B43LEGACY_FW_SQUASH=y
+          CONFIG_B43LEGACY_FW_SQUASH_COREREVS="1,2,3,4"
+          CONFIG_B43_FW_5_100_138=y
+          CONFIG_B43_FW_SQUASH=y
+          CONFIG_B43_FW_SQUASH_COREREVS="5,6,7,8,9,10,11,13,15,16,28,29,30"
+          CONFIG_B43_FW_SQUASH_PHYTYPES="G,N,LP,HT"
+          CONFIG_BRCMFMAC_PCIE=y
+          CONFIG_BRCMFMAC_USB=y
+          CONFIG_BRCMSMAC_USE_FW_FROM_WL=y
+          CONFIG_DRIVER_11AX_SUPPORT=y
+          CONFIG_DRIVER_WEXT_SUPPORT=y
+          CONFIG_PACKAGE_B43_BUSES_BCMA_AND_SSB=y
+          CONFIG_PACKAGE_B43_PHY_G=y
+          CONFIG_PACKAGE_B43_PHY_HT=y
+          CONFIG_PACKAGE_B43_PHY_LP=y
+          CONFIG_PACKAGE_B43_PHY_N=y
+          CONFIG_PACKAGE_B43_USE_BCMA=y
+          CONFIG_PACKAGE_B43_USE_SSB=y
+          CONFIG_PACKAGE_b43legacy-firmware=y
+          CONFIG_PACKAGE_brcmfmac-firmware-4366b1-pcie=y
+          CONFIG_PACKAGE_brcmfmac-firmware-4366c0-pcie=y
+          CONFIG_PACKAGE_brcmfmac-firmware-usb=y
+          CONFIG_PACKAGE_carl9170-firmware=y
+          CONFIG_PACKAGE_cypress-firmware-4356-pcie=y
+          CONFIG_PACKAGE_cypress-firmware-43570-pcie=y
+          CONFIG_PACKAGE_cypress-firmware-4359-pcie=y
+          CONFIG_PACKAGE_cypress-firmware-4373-usb=y
+          CONFIG_PACKAGE_cypress-firmware-54591-pcie=y
+          CONFIG_PACKAGE_cypress-firmware-89459-pcie=y
+          CONFIG_PACKAGE_iwl3945-firmware=y
+          CONFIG_PACKAGE_iwl4965-firmware=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl100=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl1000=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl105=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl135=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl2000=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl2030=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl3160=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl3168=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl5000=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl5150=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl6000g2=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl6000g2a=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl6000g2b=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl6050=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl7260=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl7265=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl7265d=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl8260c=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl8265=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl9000=y
+          CONFIG_PACKAGE_iwlwifi-firmware-iwl9260=y
+          CONFIG_PACKAGE_kmod-adm8211=y
+          CONFIG_PACKAGE_kmod-ath6kl=y
+          CONFIG_PACKAGE_kmod-ath6kl-usb=y
+          CONFIG_PACKAGE_kmod-b43=y
+          CONFIG_PACKAGE_kmod-b43legacy=y
+          CONFIG_PACKAGE_kmod-bcma=y
+          CONFIG_PACKAGE_kmod-brcmfmac=y
+          CONFIG_PACKAGE_kmod-brcmsmac=y
+          CONFIG_PACKAGE_kmod-brcmutil=y
+          CONFIG_PACKAGE_kmod-carl9170=y
+          CONFIG_PACKAGE_kmod-hermes=y
+          CONFIG_PACKAGE_kmod-hermes-pci=y
+          CONFIG_PACKAGE_kmod-ipw2100=y
+          CONFIG_PACKAGE_kmod-ipw2200=y
+          CONFIG_PACKAGE_kmod-iwl-legacy=y
+          CONFIG_PACKAGE_kmod-iwl3945=y
+          CONFIG_PACKAGE_kmod-iwl4965=y
+          CONFIG_PACKAGE_kmod-iwlwifi=y
+          CONFIG_PACKAGE_kmod-lib-cordic=y
+          CONFIG_PACKAGE_kmod-lib-crc8=y
+          CONFIG_PACKAGE_kmod-lib80211=y
+          CONFIG_PACKAGE_kmod-libertas-usb=y
+          CONFIG_PACKAGE_kmod-libipw=y
+          CONFIG_PACKAGE_kmod-mwifiex-pcie=y
+          CONFIG_PACKAGE_kmod-mwl8k=y
+          CONFIG_PACKAGE_kmod-net-prism54=y
+          CONFIG_PACKAGE_kmod-net-rtl8192su=y
+          CONFIG_PACKAGE_kmod-owl-loader=y
+          CONFIG_PACKAGE_kmod-p54-common=y
+          CONFIG_PACKAGE_kmod-p54-pci=y
+          CONFIG_PACKAGE_kmod-p54-usb=y
+          CONFIG_PACKAGE_kmod-rsi91x=y
+          CONFIG_PACKAGE_kmod-rsi91x-usb=y
+          CONFIG_PACKAGE_kmod-rt2400-pci=y
+          CONFIG_PACKAGE_kmod-rt2500-pci=y
+          CONFIG_PACKAGE_kmod-rt2500-usb=y
+          CONFIG_PACKAGE_kmod-rt2800-mmio=y
+          CONFIG_PACKAGE_kmod-rt2800-pci=y
+          CONFIG_PACKAGE_kmod-rt2x00-mmio=y
+          CONFIG_PACKAGE_kmod-rt2x00-pci=y
+          CONFIG_PACKAGE_kmod-rt61-pci=y
+          CONFIG_PACKAGE_kmod-rt73-usb=y
+          CONFIG_PACKAGE_kmod-rtl8180=y
+          CONFIG_PACKAGE_kmod-rtl8187=y
+          CONFIG_PACKAGE_kmod-rtl8192c-common=y
+          CONFIG_PACKAGE_kmod-rtl8192ce=y
+          CONFIG_PACKAGE_kmod-rtl8192cu=y
+          CONFIG_PACKAGE_kmod-rtl8192de=y
+          CONFIG_PACKAGE_kmod-rtl8192se=y
+          CONFIG_PACKAGE_kmod-rtl8812au-ct=y
+          CONFIG_PACKAGE_kmod-rtl8821ae=y
+          CONFIG_PACKAGE_kmod-rtl8xxxu=y
+          CONFIG_PACKAGE_kmod-rtlwifi=y
+          CONFIG_PACKAGE_kmod-rtlwifi-btcoexist=y
+          CONFIG_PACKAGE_kmod-rtlwifi-pci=y
+          CONFIG_PACKAGE_kmod-rtlwifi-usb=y
+          CONFIG_PACKAGE_kmod-rtw88=y
+          CONFIG_PACKAGE_kmod-ssb=y
+          CONFIG_PACKAGE_kmod-wl12xx=y
+          CONFIG_PACKAGE_kmod-wl18xx=y
+          CONFIG_PACKAGE_kmod-wlcore=y
+          CONFIG_PACKAGE_kmod-zd1211rw=y
+          CONFIG_PACKAGE_libertas-usb-firmware=y
+          CONFIG_PACKAGE_mt7601u-firmware=y
+          CONFIG_PACKAGE_mwifiex-pcie-firmware=y
+          CONFIG_PACKAGE_mwl8k-firmware=y
+          CONFIG_PACKAGE_p54-pci-firmware=y
+          CONFIG_PACKAGE_p54-usb-firmware=y
+          CONFIG_PACKAGE_prism54-firmware=y
+          CONFIG_PACKAGE_rs9113-firmware=y
+          CONFIG_PACKAGE_rt2800-pci-firmware=y
+          CONFIG_PACKAGE_rt61-pci-firmware=y
+          CONFIG_PACKAGE_rt73-usb-firmware=y
+          CONFIG_PACKAGE_rtl8188eu-firmware=y
+          CONFIG_PACKAGE_rtl8192ce-firmware=y
+          CONFIG_PACKAGE_rtl8192cu-firmware=y
+          CONFIG_PACKAGE_rtl8192de-firmware=y
+          CONFIG_PACKAGE_rtl8192eu-firmware=y
+          CONFIG_PACKAGE_rtl8192se-firmware=y
+          CONFIG_PACKAGE_rtl8192su-firmware=y
+          CONFIG_PACKAGE_rtl8723au-firmware=y
+          CONFIG_PACKAGE_rtl8723bu-firmware=y
+          CONFIG_PACKAGE_rtl8821ae-firmware=y
+          CONFIG_PACKAGE_rtl8822be-firmware=y
+          CONFIG_PACKAGE_rtl8822ce-firmware=y
+          CONFIG_PACKAGE_wl12xx-firmware=y
+          CONFIG_PACKAGE_wl18xx-firmware=y
+          EOF
+
+          # 常用LuCI插件选择:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_netdata=y
+          CONFIG_PACKAGE_luci-app-netdata-zh=y
+          CONFIG_PACKAGE_luci-app-webadmin=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_luci-app-diskman=y
+          CONFIG_PACKAGE_luci-app-autoreboot=n
+          CONFIG_PACKAGE_luci-app-autopoweroff=y
+          CONFIG_PACKAGE_luci-app-vssr=y
+          CONFIG_PACKAGE_lua-maxminddb=y
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_luci-app-koolproxyR=y
+          CONFIG_PACKAGE_luci-app-ttnode=y
+          CONFIG_PACKAGE_adguardhome=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
+          CONFIG_PACKAGE_luci-app-ssr-plus=y
+          CONFIG_PACKAGE_luci-app-jd-dailybonus=y
+          CONFIG_PACKAGE_luci-app-clash=y
+          CONFIG_PACKAGE_luci-app-openclash=y
+          CONFIG_PACKAGE_smartdns=y
+          CONFIG_PACKAGE_luci-app-smartdns=y
+          CONFIG_PACKAGE_oscam=y
+          CONFIG_PACKAGE_luci-app-oscam=y
+          CONFIG_PACKAGE_tvheadend=y
+          CONFIG_PACKAGE_luci-app-serverchan=y
+          CONFIG_PACKAGE_luci-app-watchcat=y
+          CONFIG_PACKAGE_luci-app-udpxy=y
+          CONFIG_PACKAGE_luci-app-frpc=y
+          CONFIG_PACKAGE_luci-app-uhttpd=y
+          CONFIG_PACKAGE_luci-app-iptvhelper=y
+          CONFIG_PACKAGE_luci-app-nps=y
+          # CONFIG_PACKAGE_luci-app-docker=y
+          CONFIG_PACKAGE_luci-lib-docker=y
+          CONFIG_PACKAGE_luci-app-dockerman=y
+          CONFIG_PACKAGE_luci-app-mwan3helper=y
+          CONFIG_PACKAGE_luci-app-kodexplorer=y
+          CONFIG_PACKAGE_luci-app-aria2=y
+          CONFIG_PACKAGE_luci-app-nfs=y
+          CONFIG_PACKAGE_luci-app-verysync=y
+          CONFIG_PACKAGE_luci-app-usb-printer=y
+          CONFIG_PACKAGE_luci-app-baidupcs-web=y
+          CONFIG_PACKAGE_luci-app-hd-idle=y
+          CONFIG_PACKAGE_luci-app-rclone=y
+          CONFIG_PACKAGE_luci-app-minidlna=y
+          CONFIG_PACKAGE_qBittorrent=y
+          CONFIG_PACKAGE_luci-app-qbittorrent=y
+          CONFIG_PACKAGE_transmission=y
+          CONFIG_PACKAGE_luci-app-transmission=y
+          CONFIG_PACKAGE_luci-app-pptp-vpnserver=y
+          CONFIG_PACKAGE_luci-app-openvpn-server=y
+          CONFIG_PACKAGE_luci-app-eqos=y
+          CONFIG_PACKAGE_luci-app-oaf=y
+          CONFIG_PACKAGE_luci-app-syncdial=y
+          CONFIG_PACKAGE_luci-app-wrtbwmon=y
+          # CONFIG_v2ray-plugin_INCLUDE_GOPROXY is not set
+          EOF
+
+          # LuCI主题:
+          cat >> .config <<EOF
+          # CONFIG_PACKAGE_luci-theme-argon=y
+          # CONFIG_PACKAGE_luci-theme-netgear=y
+          CONFIG_PACKAGE_luci-theme-argon-leanimg=y
+          CONFIG_PACKAGE_luci-theme-edge=y
+          CONFIG_PACKAGE_luci-theme-infinityfreedom=y
+          EOF
+
+          # 常用软件包:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_iperf3=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_screen=y
+          CONFIG_PACKAGE_tree=y
+          CONFIG_PACKAGE_vim-fuller=y
+          CONFIG_PACKAGE_wget=y
+          EOF
+
+          # 取消编译VMware镜像以及镜像填充 (不要删除被缩进的注释符号):
+          cat >> .config <<EOF
+          # CONFIG_TARGET_IMAGES_PAD is not set
+          # CONFIG_VMDK_IMAGES is not set
+          EOF
+
+          # 
+          # ========================固件定制部分结束========================
+          # 
+
+          sed -i 's/^[ \t]*//g' ./.config
+          make defconfig
+
+      - name: Custom configuration
+        run: |
+          # 修改openwrt登陆地址,把下面的192.168.6.1修改成你想要的就可以了
+          sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
+          
+          # 修改主机名字，把OpenWrt-1.0修改你喜欢的就行（不能纯数字或者使用中文）
+          # sed -i '/uci commit system/i\uci set system.@system[0].hostname='OpenWrt-1.0'' package/lean/default-settings/files/zzz-default-settings
+          
+          # 版本号里显示一个自己的名字（Lan build $(TZ=UTC-8 date "+%Y.%m.%d") @ 这些都是后增加的）
+          sed -i "s/OpenWrt /Docker build $(TZ=UTC-8 date "+%Y%m%d") @ OpenWrt /g" package/lean/default-settings/files/zzz-default-settings
+          
+          # 修改argon为默认主题,可根据你喜欢的修改成其他的（不选择那些会自动改变为默认主题的主题才有效果）
+          # sed -i 's/luci-theme-bootstrap/luci-theme-argon-leanimg/g' feeds/luci/collections/luci/Makefile
+          
+          # 设置密码为空（安装固件时无需密码登陆，然后自己修改想要的密码）
+          # sed -i 's@.*CYXluq4wUazHjmCDBCqXF*@#&@g' package/lean/default-settings/files/zzz-default-settings
+          
+          # 修改插件名字（修改名字后不知道会不会对插件功能有影响，自己多测试）
+          sed -i 's/"网络存储"/"存储"/g' package/lean/luci-app-vsftpd/po/zh-cn/vsftpd.po
+          sed -i 's/"网络存储"/"存储"/g' package/lean/luci-app-usb-printer/po/zh-cn/usb-printer.po
+          sed -i 's/"BaiduPCS Web"/"百度网盘"/g' package/lean/luci-app-baidupcs-web/luasrc/controller/baidupcs-web.lua
+          sed -i 's/"带宽监控"/"带宽"/g' feeds/luci/applications/luci-app-nlbwmon/po/zh-cn/nlbwmon.po
+          sed -i 's/"实时流量监测"/"流量"/g' package/lean/luci-app-wrtbwmon/po/zh-cn/wrtbwmon.po
+
+      - name: Make download
+        run: |
+          make download -j8 || make download -j1 V=s
+          rm -rf $(find ./dl/ -size -1024c)
+          df -h
+
+      - name: Compile firmware
+        run: |
+          make -j$(nproc) || make -j1 V=s
+          echo "======================="
+          echo "Space usage:"
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h ./ --max-depth=1
+          du -h /mnt/openwrt/ --max-depth=1 || true
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p ./artifact/firmware
+          mkdir -p ./artifact/package
+          mkdir -p ./artifact/buildinfo
+          rm -rf $(find ./bin/targets/ -type d -name "packages")
+          cp -rf $(find ./bin/targets/ -type f) ./artifact/firmware/
+          cp -rf $(find ./bin/packages/ -type f -name "*.ipk") ./artifact/package/
+          cp -rf $(find ./bin/targets/ -type f -name "*.buildinfo" -o -name "*.manifest") ./artifact/buildinfo/
+
+      - name: Deliver buildinfo
+        uses: actions/upload-artifact@v2
+        with:
+          name: OpenWrt_buildinfo
+          path: ./artifact/buildinfo/
+
+      - name: Deliver package
+        uses: actions/upload-artifact@v2
+        with:
+          name: OpenWrt_package
+          path: ./artifact/package/
+
+      - name: Deliver firmware
+        uses: actions/upload-artifact@v2
+        with:
+          name: OpenWrt_firmware_Docker
+          path: ./bin/targets/
+
+      - name: Upload release asset
+        if: github.event == 'release'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.YOURTOKEN }}
+          file: ./artifact/firmware/*
+          tag: ${{ github.ref }}
+          file_glob: true
